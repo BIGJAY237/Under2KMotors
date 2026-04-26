@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin Dashboard · Under2K Motors</title>
+    <!-- Preconnect to Google Fonts for faster loading -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <!-- Link to the main stylesheet -->
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body data-page="admin">
+    <!-- Site header with navigation -->
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="logo" href="index.html">
+          <div class="logo-mark">U</div>
+          <span class="logo-text">Under2K Motors</span>
+        </a>
+        <nav class="nav-links">
+          <a class="nav-link" data-page="home" href="index.html">Home</a>
+          <a class="nav-link" data-page="listings" href="listings.html">Browse</a>
+          <a class="nav-link" data-page="favorites" href="favorites.html">Favorites</a>
+          <a class="nav-link" data-page="about" href="about.html">About</a>
+          <a class="nav-link" data-page="contact" href="contact.html">Contact</a>
+          <a class="nav-link" data-page="login" href="login.html">Admin</a>
+        </nav>
+        <a class="btn btn-primary nav-cta" href="listings.html">Get Started</a>
+        <button class="menu-toggle" type="button" aria-label="Toggle menu" aria-expanded="false">
+          <span class="menu-icon-open">☰</span>
+          <span class="menu-icon-close">✕</span>
+        </button>
+      </div>
+      <div class="mobile-menu" id="mobileMenu" aria-hidden="true">
+        <a href="index.html">Home</a>
+        <a href="listings.html">Browse</a>
+        <a href="favorites.html">Favorites</a>
+        <a href="about.html">About</a>
+        <a href="contact.html">Contact</a>
+        <a href="login.html">Admin</a>
+        <a class="btn btn-primary mobile-cta" href="listings.html">Get Started</a>
+      </div>
+    </header>
+
+    <main>
+      <section class="admin-dashboard">
+        <div class="admin-header">
+          <div>
+            <p class="eyebrow">Dashboard</p>
+            <h1>Manage Cars & Logistics</h1>
+            <p>Update inventory, upload media, and keep your global fleet in sync.</p>
+          </div>
+          <button id="logoutAdmin" class="btn btn-outline">Logout</button>
+        </div>
+        <div class="admin-panel">
+          <article class="admin-card">
+            <h2 id="adminFormTitle">Add New Car</h2>
+            <!-- Admin form for adding/editing cars -->
+            <form id="adminForm">
+              <!-- Basic car information fields -->
+              <div class="form-row">
+                <label>
+                  Model name
+                  <input type="text" name="name" required />
+                </label>
+                <label>
+                  Brand
+                  <select name="brand" id="adminBrandSelect" required>
+                    <option value="">Select Brand</option>
+                  </select>
+                </label>
+              </div>
+              <div class="form-row">
+                <label>
+                  Price (USD)
+                  <input type="number" name="price" min="0" required />
+                </label>
+                <label>
+                  Year
+                  <input type="number" name="year" min="1900" max="2099" required />
+                </label>
+              </div>
+              <div class="form-row">
+                <label>
+                  Mileage
+                  <input type="text" name="mileage" />
+                </label>
+                <label>
+                  Type
+                  <select name="type" id="adminTypeSelect" required>
+                    <option value="">Select Type</option>
+                  </select>
+                </label>
+              </div>
+              <div class="form-row">
+                <label>
+                  Transmission
+                  <input type="text" name="transmission" />
+                </label>
+                <label>
+                  Fuel Type
+                  <input type="text" name="fuelType" />
+                </label>
+              </div>
+              <div class="form-row">
+                <label>
+                  Color
+                  <input type="text" name="color" />
+                </label>
+                <label>
+                  Horsepower
+                  <input type="text" name="horsepower" />
+                </label>
+              </div>
+              <div class="form-row">
+                <label>
+                  Top Speed
+                  <input type="text" name="topSpeed" />
+                </label>
+                <label>
+                  Acceleration
+                  <input type="text" name="acceleration" />
+                </label>
+              </div>
+              <label>
+                Description
+                <textarea name="description" rows="3"></textarea>
+              </label>
+              <label>
+                Highlighted features (one per line)
+                <textarea name="features" rows="3"></textarea>
+              </label>
+              <!-- File upload inputs for images and video -->
+              <label>
+                Image 1
+                <input type="file" id="image1" name="image1" accept="image/*" />
+              </label>
+              <label>
+                Image 2
+                <input type="file" id="image2" name="image2" accept="image/*" />
+              </label>
+              <label>
+                Video (optional)
+                <input type="file" id="video" name="video" accept="video/*" />
+              </label>
+
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Save Car</button>
+                <button type="button" class="btn btn-outline" id="resetForm">Reset</button>
+              </div>
+              <p class="form-status" id="adminFeedback" role="status" aria-live="polite"></p>
+            </form>
+          </article>
+          <article class="admin-card">
+            <h2>Inventory</h2>
+            <!-- List of cars in inventory for editing/deleting -->
+            <div id="adminCarList" class="admin-list"></div>
+          </article>
+          <article class="admin-card">
+            <h2>Manage Brands & Types</h2>
+            <div class="form-row">
+              <label>
+                Add brand
+                <input type="text" id="addBrandInput" placeholder="Brand name" />
+              </label>
+              <button type="button" id="addBrandButton" class="btn btn-primary">Add Brand</button>
+            </div>
+            <div id="brandListContainer" class="admin-list"></div>
+            <div class="form-row">
+              <label>
+                Add type
+                <input type="text" id="addTypeInput" placeholder="Type name" />
+              </label>
+              <button type="button" id="addTypeButton" class="btn btn-primary">Add Type</button>
+            </div>
+            <div id="typeListContainer" class="admin-list"></div>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <div class="footer-grid">
+          <div>
+            <div class="footer-logo">
+              <div class="logo-mark">U</div>
+              <span>Under2K Motors</span>
+            </div>
+            <p>Your trusted partner for premium cars and worldwide shipping. Experience luxury, reliability, and excellence.</p>
+            <div class="footer-social">
+              <a href="#" aria-label="Facebook">👍</a>
+              <a href="#" aria-label="Twitter">🐦</a>
+              <a href="#" aria-label="Instagram">📸</a>
+              <a href="#" aria-label="LinkedIn">💼</a>
+            </div>
+          </div>
+          <div>
+            <h3>Quick Links</h3>
+            <ul>
+              <li><a href="index.html">Home</a></li>
+              <li><a href="listings.html">Browse</a></li>
+              <li><a href="about.html">About</a></li>
+              <li><a href="contact.html">Contact</a></li>
+            </ul>
+          </div>
+          <div>
+            <h3>Services</h3>
+            <ul>
+              <li>Buy Cars</li>
+              <li>Sell Cars</li>
+              <li>Global Shipping</li>
+              <li>Car Inspection</li>
+              <li>Financing Options</li>
+              <li>Insurance</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Contact Us</h3>
+            <ul class="contact-list">
+              <li><span>📍</span><span>123 Luxury Ave, Beverly Hills, CA 90210, USA</span></li>
+              <li><span>📞</span><span>+1 (303) 883-1244</span></li>
+              <li><span>✉️</span><span>contact@Under2K Motors.com</span></li>
+            </ul>
+          </div>
+        </div>
+        <div class="footer-bottom">
+          <p>© 2026 Under2K Motors. All rights reserved.</p>
+          <div class="footer-policies">
+            <a href="#">Privacy Policy</a>
+            <a href="#">Terms of Service</a>
+            <a href="#">Cookie Policy</a>
+          </div>
+        </div>
+      </div>
+    </footer>
+
+    <script src="script.js"></script>
+  </body>
+</html>
