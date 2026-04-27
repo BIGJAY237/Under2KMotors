@@ -5,7 +5,7 @@
   const STORAGE_TYPES = "Under2K Motors-types";
   const STORAGE_SESSION = "Under2K Motors-admin";
   const ADMIN_TOKEN_KEY = "Under2K Motors-admin-token";
-  const API_BASE_URL = "http://127.0.0.1:5000";
+  const API_BASE_URL = "https://under2kmotors.onrender.com"
   const WHATSAPP_PHONE = "13038831244"; // WhatsApp: +1 (303) 883-1244
 
   // Global variable to hold loaded cars from backend
