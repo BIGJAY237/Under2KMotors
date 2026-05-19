@@ -1,15 +1,22 @@
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, ".env") });
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const nodemailer = require("nodemailer");
 const multer = require("multer");
-const path = require("path");
 const fs = require("fs");
 const Car = require("./models/Car");
 const Brand = require("./models/Brand");
 const Type = require("./models/Type");
 
 const app = express();
+const PORT = Number(process.env.PORT) || 5000;
+const DB_URI = process.env.MONGO_URI;
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "DIBU";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "DIBU237";
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "under2k-admin-token";
+const frontendDir = path.resolve(__dirname, "..");
 
 // Create uploads directory if it doesn't exist
 const uploadsDir = path.join(__dirname, "uploads");
@@ -65,11 +72,86 @@ function saveBase64AsFile(base64String, prefix) {
     const filename = `${prefix}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`;
     const filePath = path.join(uploadsDir, filename);
     fs.writeFileSync(filePath, buffer);
-    return `/uploads/${filename}`;
+    return buildUploadPath(filename);
   } catch (error) {
     console.error("Error saving base64 as file:", error);
     return base64String; // Fallback to original
   }
+}
+
+function buildUploadPath(filename) {
+  return `/uploads/${filename}`.replace(/\\/g, "/");
+}
+
+function normalizeMediaValue(value) {
+  if (!value || typeof value !== "string") {
+    return "";
+  }
+
+  const trimmedValue = value.trim();
+  if (!trimmedValue) {
+    return "";
+  }
+
+  if (trimmedValue.startsWith("http://") || trimmedValue.startsWith("https://") || trimmedValue.startsWith("data:")) {
+    return trimmedValue;
+  }
+
+  const normalizedValue = trimmedValue.replace(/\\/g, "/");
+  const uploadsIndex = normalizedValue.indexOf("/uploads/");
+
+  if (uploadsIndex !== -1) {
+    return normalizedValue.slice(uploadsIndex);
+  }
+
+  if (normalizedValue.startsWith("uploads/")) {
+    return `/${normalizedValue}`;
+  }
+
+  if (normalizedValue.startsWith("/")) {
+    return normalizedValue;
+  }
+
+  return buildUploadPath(path.basename(normalizedValue));
+}
+
+function normalizeEntity(document) {
+  const entity = document && document.toObject ? document.toObject() : document;
+  if (!entity) {
+    return entity;
+  }
+
+  const { _id, __v, ...rest } = entity;
+  return {
+    id: _id ? _id.toString() : rest.id,
+    ...rest
+  };
+}
+
+function parseFeatures(value) {
+  if (!value) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((feature) => String(feature).trim()).filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) {
+        return parsed.map((feature) => String(feature).trim()).filter(Boolean);
+      }
+    } catch (error) {
+      return value
+        .split("\n")
+        .map((feature) => feature.trim())
+        .filter(Boolean);
+    }
+  }
+
+  return [];
 }
 
 app.use(cors());
@@ -78,6 +160,7 @@ app.use(express.urlencoded({ extended: true, limit: "100mb" }));
 
 // Serve uploaded files statically
 app.use("/uploads", express.static(uploadsDir));
+app.use(express.static(frontendDir));
 
 // Migration function to convert base64 images/videos to files
 async function migrateBase64ToFiles() {
@@ -118,11 +201,6 @@ async function migrateBase64ToFiles() {
   }
 }
 
-const DB_URI = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/carDB";
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "DIBU";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "DIBU237";
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "under2k-admin-token";
-
 // Email configuration - Replace with your real email settings
 const EMAIL_USER = process.env.EMAIL_USER || "your-email@gmail.com";
 const EMAIL_PASS = process.env.EMAIL_PASS || "your-app-password";
@@ -140,11 +218,12 @@ function isVideoUrl(url) {
 }
 
 function normalizeCar(carDoc) {
-  const car = carDoc.toObject ? carDoc.toObject() : carDoc;
-  const { _id, __v, ...rest } = car;
+  const car = normalizeEntity(carDoc);
   return {
-    id: _id ? _id.toString() : rest.id,
-    ...rest
+    ...car,
+    images: Array.isArray(car.images) ? car.images.map(normalizeMediaValue).filter(Boolean) : [],
+    videos: Array.isArray(car.videos) ? car.videos.map(normalizeMediaValue).filter(Boolean) : [],
+    video: normalizeMediaValue(car.video || (Array.isArray(car.videos) ? car.videos[0] : ""))
   };
 }
 
@@ -349,19 +428,15 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-mongoose.connect(DB_URI)
-  .then(async () => {
-    console.log("MongoDB connected");
-    await seedDefaultCars();
-    await migrateBase64ToFiles();
-    // await seedDefaultBrandsAndTypes();
-  })
-  .catch((err) => {
-    console.error("MongoDB connection error:", err);
-  });
-
 app.get("/", (req, res) => {
-  res.send("Server is running");
+  res.sendFile(path.join(frontendDir, "index.html"));
+});
+
+app.get("/health", (req, res) => {
+  res.json({
+    ok: true,
+    mongodb: mongoose.connection.readyState === 1
+  });
 });
 
 app.post("/admin-login", (req, res) => {
@@ -409,21 +484,17 @@ app.post("/add-car", adminAuthMiddleware, carMediaUpload, async (req, res) => {
 
     const uploadedImages = [];
     if (image1) {
-      uploadedImages.push(`/uploads/${image1.filename}`);
+      uploadedImages.push(buildUploadPath(image1.filename));
     }
     if (image2) {
-      uploadedImages.push(`/uploads/${image2.filename}`);
+      uploadedImages.push(buildUploadPath(image2.filename));
     }
-    const uploadedVideo = videoFile ? `/uploads/${videoFile.filename}` : "";
+    const uploadedVideo = videoFile ? buildUploadPath(videoFile.filename) : "";
 
     carData.images = uploadedImages;
     carData.video = uploadedVideo;
     carData.videos = uploadedVideo ? [uploadedVideo] : [];
-    carData.features = carData.features
-      ? Array.isArray(carData.features)
-        ? carData.features
-        : JSON.parse(carData.features)
-      : [];
+    carData.features = parseFeatures(carData.features);
 
     const newCar = new Car(carData);
     await newCar.save();
@@ -443,31 +514,29 @@ app.put("/edit-car/:id", adminAuthMiddleware, carMediaUpload, async (req, res) =
 
     const uploadedImages = [];
     if (image1) {
-      uploadedImages.push(`/uploads/${image1.filename}`);
+      uploadedImages.push(buildUploadPath(image1.filename));
     }
     if (image2) {
-      uploadedImages.push(`/uploads/${image2.filename}`);
+      uploadedImages.push(buildUploadPath(image2.filename));
     }
-    const uploadedVideo = videoFile ? `/uploads/${videoFile.filename}` : "";
+    const uploadedVideo = videoFile ? buildUploadPath(videoFile.filename) : "";
 
     const existingCar = await Car.findById(req.params.id);
     if (!existingCar) {
       return res.status(404).json({ error: "Car not found" });
     }
 
-    const existingImages = existingCar.images || [];
+    const existingImages = Array.isArray(existingCar.images) ? existingCar.images : [];
     const existingVideo = existingCar.video || (existingCar.videos && existingCar.videos[0]) || "";
-    let finalImages = uploadedImages.length > 0 ? uploadedImages : existingImages.map((img, index) => saveBase64AsFile(img, `image${index + 1}`));
-    let finalVideo = uploadedVideo || saveBase64AsFile(existingVideo, 'video');
+    const finalImages = uploadedImages.length > 0
+      ? uploadedImages
+      : existingImages.map((img, index) => normalizeMediaValue(saveBase64AsFile(img, `image${index + 1}`))).filter(Boolean);
+    const finalVideo = normalizeMediaValue(uploadedVideo || saveBase64AsFile(existingVideo, "video"));
 
     carData.images = finalImages;
     carData.video = finalVideo;
     carData.videos = finalVideo ? [finalVideo] : [];
-    carData.features = carData.features
-      ? Array.isArray(carData.features)
-        ? carData.features
-        : JSON.parse(carData.features)
-      : [];
+    carData.features = parseFeatures(carData.features);
 
     const updatedCar = await Car.findByIdAndUpdate(req.params.id, carData, {
       new: true,
@@ -515,15 +584,20 @@ app.delete("/delete-car/:id", adminAuthMiddleware, async (req, res) => {
 });
 
 // Brand routes
-app.get("/brands", (req, res) => {
-  res.json([{ id: "1", name: "Test Brand" }]);
+app.get("/brands", async (req, res) => {
+  try {
+    const brands = await Brand.find().sort({ name: 1 }).lean();
+    res.json(brands.map(normalizeEntity));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.post("/add-brand", adminAuthMiddleware, async (req, res) => {
   try {
     const newBrand = new Brand(req.body);
     await newBrand.save();
-    res.json(normalizeCar(newBrand));
+    res.json(normalizeEntity(newBrand));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -538,7 +612,7 @@ app.put("/edit-brand/:id", adminAuthMiddleware, async (req, res) => {
     if (!updatedBrand) {
       return res.status(404).json({ error: "Brand not found" });
     }
-    res.json(normalizeCar(updatedBrand));
+    res.json(normalizeEntity(updatedBrand));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -546,10 +620,17 @@ app.put("/edit-brand/:id", adminAuthMiddleware, async (req, res) => {
 
 app.delete("/delete-brand/:id", adminAuthMiddleware, async (req, res) => {
   try {
-    const removed = await Brand.findByIdAndDelete(req.params.id);
-    if (!removed) {
+    const brand = await Brand.findById(req.params.id);
+    if (!brand) {
       return res.status(404).json({ error: "Brand not found" });
     }
+
+    const linkedCar = await Car.exists({ brand: brand.name });
+    if (linkedCar) {
+      return res.status(400).json({ error: "Cannot delete brand with existing cars" });
+    }
+
+    await brand.deleteOne();
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -559,8 +640,8 @@ app.delete("/delete-brand/:id", adminAuthMiddleware, async (req, res) => {
 // Type routes
 app.get("/types", async (req, res) => {
   try {
-    const types = await Type.find();
-    res.json(types);
+    const types = await Type.find().sort({ name: 1 }).lean();
+    res.json(types.map(normalizeEntity));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -570,7 +651,7 @@ app.post("/add-type", adminAuthMiddleware, async (req, res) => {
   try {
     const newType = new Type(req.body);
     await newType.save();
-    res.json(normalizeCar(newType));
+    res.json(normalizeEntity(newType));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -585,7 +666,7 @@ app.put("/edit-type/:id", adminAuthMiddleware, async (req, res) => {
     if (!updatedType) {
       return res.status(404).json({ error: "Type not found" });
     }
-    res.json(normalizeCar(updatedType));
+    res.json(normalizeEntity(updatedType));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -593,10 +674,17 @@ app.put("/edit-type/:id", adminAuthMiddleware, async (req, res) => {
 
 app.delete("/delete-type/:id", adminAuthMiddleware, async (req, res) => {
   try {
-    const removed = await Type.findByIdAndDelete(req.params.id);
-    if (!removed) {
+    const type = await Type.findById(req.params.id);
+    if (!type) {
       return res.status(404).json({ error: "Type not found" });
     }
+
+    const linkedCar = await Car.exists({ type: type.name });
+    if (linkedCar) {
+      return res.status(400).json({ error: "Cannot delete type with existing cars" });
+    }
+
+    await type.deleteOne();
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -605,7 +693,8 @@ app.delete("/delete-type/:id", adminAuthMiddleware, async (req, res) => {
 
 // Contact form email
 app.post("/contact", async (req, res) => {
-  const { fullName, email, message } = req.body;
+  const fullName = (req.body.fullName || req.body.name || "").trim();
+  const { email, message } = req.body;
   if (!fullName || !email || !message) {
     return res.status(400).json({ error: "All fields are required" });
   }
@@ -624,4 +713,26 @@ app.post("/contact", async (req, res) => {
   }
 });
 
-app.listen(5000, () => console.log("Server running on port 5000"));
+async function startServer() {
+  if (!DB_URI) {
+    console.error("Missing MONGO_URI environment variable.");
+    process.exit(1);
+  }
+
+  try {
+    await mongoose.connect(DB_URI);
+    console.log("MongoDB connected");
+    await seedDefaultCars();
+    await migrateBase64ToFiles();
+    await seedDefaultBrandsAndTypes();
+
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error("Failed to start server:", error);
+    process.exit(1);
+  }
+}
+
+startServer();

@@ -1,15 +1,36 @@
 (function () {
   // Constants for localStorage keys
   const STORAGE_FAVORITES = "Under2K Motors-favorites";
-  const STORAGE_BRANDS = "Under2K Motors-brands";
-  const STORAGE_TYPES = "Under2K Motors-types";
   const STORAGE_SESSION = "Under2K Motors-admin";
   const ADMIN_TOKEN_KEY = "Under2K Motors-admin-token";
-  const API_BASE_URL = "https://under2kmotors.onrender.com"
+  const API_BASE_URL = resolveApiBaseUrl();
   const WHATSAPP_PHONE = "13038831244"; // WhatsApp: +1 (303) 883-1244
 
   // Global variable to hold loaded cars from backend
   var loadedCars = [];
+  var loadedBrands = [];
+  var loadedTypes = [];
+
+  function resolveApiBaseUrl() {
+    var override = window.__UNDER2K_API_BASE_URL;
+    if (typeof override === "string" && override.trim() !== "") {
+      return override.trim().replace(/\/+$/, "");
+    }
+
+    if (window.location.protocol === "file:") {
+      return "http://localhost:5000";
+    }
+
+    var isLocalHost =
+      window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1";
+
+    if (isLocalHost && window.location.port !== "5000") {
+      return window.location.protocol + "//" + window.location.hostname + ":5000";
+    }
+
+    return window.location.origin.replace(/\/+$/, "");
+  }
 
   // Default cars data with images as URLs (for backward compatibility)
   const DEFAULT_CARS = [
@@ -167,82 +188,71 @@
 
   const bodyPage = document.body.dataset.page;
 
-  // Ensure brands and types lists exist for admin controls.
-  function ensureBrandTypeLists() {
-    if (!localStorage.getItem(STORAGE_BRANDS)) {
-      var initial = getCars().map(function (car) {
-        return car.brand;
-      });
-      initial = initial.filter(function (value, index, arr) {
-        return arr.indexOf(value) === index;
-      });
-      localStorage.setItem(STORAGE_BRANDS, JSON.stringify(initial));
+  function uniqueValues(values) {
+    return values.filter(function (value, index, arr) {
+      return value && arr.indexOf(value) === index;
+    });
+  }
+
+  function buildReferenceRecords(names) {
+    return uniqueValues(names).map(function (name) {
+      return {
+        id: "",
+        name: name
+      };
+    });
+  }
+
+  function normalizeReferenceItem(item) {
+    if (!item) {
+      return null;
     }
-    if (!localStorage.getItem(STORAGE_TYPES)) {
-      var initialTypes = getCars().map(function (car) {
-        return car.type;
-      });
-      initialTypes = initialTypes.filter(function (value, index, arr) {
-        return arr.indexOf(value) === index;
-      });
-      localStorage.setItem(STORAGE_TYPES, JSON.stringify(initialTypes));
+
+    var name = typeof item.name === "string" ? item.name.trim() : "";
+    if (!name) {
+      return null;
     }
+
+    return {
+      id: item.id || item._id || "",
+      name: name
+    };
+  }
+
+  function getReferenceNames(records) {
+    return uniqueValues(records.map(function (record) {
+      return record && record.name ? record.name : "";
+    }));
+  }
+
+  function ensureReferenceFallback() {
+    var rootValues = rootBrandTypesFromCars();
+
+    if (!loadedBrands.length) {
+      loadedBrands = buildReferenceRecords(rootValues.brands);
+    }
+
+    if (!loadedTypes.length) {
+      loadedTypes = buildReferenceRecords(rootValues.types);
+    }
+  }
+
+  function getBrandRecords() {
+    ensureReferenceFallback();
+    return loadedBrands.slice();
+  }
+
+  function getTypeRecords() {
+    ensureReferenceFallback();
+    return loadedTypes.slice();
   }
 
   function getBrands() {
-    ensureBrandTypeLists();
-    return JSON.parse(localStorage.getItem(STORAGE_BRANDS)) || [];
+    return uniqueValues(getReferenceNames(getBrandRecords()).concat(rootBrandTypesFromCars().brands));
   }
 
   function getTypes() {
-    ensureBrandTypeLists();
-    return JSON.parse(localStorage.getItem(STORAGE_TYPES)) || [];
-  }
-
-  function saveBrands(brands) {
-    localStorage.setItem(STORAGE_BRANDS, JSON.stringify(brands));
-  }
-
-  function saveTypes(types) {
-    localStorage.setItem(STORAGE_TYPES, JSON.stringify(types));
-  }
-
-  function addBrand(brand) {
-    if (!brand) {
-      return;
-    }
-    var brands = getBrands();
-    if (brands.indexOf(brand) === -1) {
-      brands.push(brand);
-      saveBrands(brands);
-    }
-  }
-
-  function removeBrand(brand) {
-    var brands = getBrands();
-    brands = brands.filter(function (item) {
-      return item !== brand;
-    });
-    saveBrands(brands);
-  }
-
-  function addType(type) {
-    if (!type) {
-      return;
-    }
-    var types = getTypes();
-    if (types.indexOf(type) === -1) {
-      types.push(type);
-      saveTypes(types);
-    }
-  }
-
-  function removeType(type) {
-    var types = getTypes();
-    types = types.filter(function (item) {
-      return item !== type;
-    });
-    saveTypes(types);
+    return uniqueValues(getReferenceNames(getTypeRecords()).concat(rootBrandTypesFromCars().types));
   }
 
   function getAdminToken() {
@@ -280,6 +290,41 @@
     return response.json();
   }
 
+  async function loadBrandsFromServer() {
+    try {
+      var brands = await apiFetch("/brands", { method: "GET" });
+      if (Array.isArray(brands)) {
+        loadedBrands = brands.map(normalizeReferenceItem).filter(Boolean);
+      }
+    } catch (error) {
+      console.warn("Brand list unavailable:", error);
+    }
+
+    ensureReferenceFallback();
+    return loadedBrands;
+  }
+
+  async function loadTypesFromServer() {
+    try {
+      var types = await apiFetch("/types", { method: "GET" });
+      if (Array.isArray(types)) {
+        loadedTypes = types.map(normalizeReferenceItem).filter(Boolean);
+      }
+    } catch (error) {
+      console.warn("Type list unavailable:", error);
+    }
+
+    ensureReferenceFallback();
+    return loadedTypes;
+  }
+
+  async function loadReferenceDataFromServer() {
+    await Promise.all([
+      loadBrandsFromServer(),
+      loadTypesFromServer()
+    ]);
+  }
+
   function normalizeServerCar(car) {
     if (!car) {
       return car;
@@ -309,11 +354,7 @@
 
   async function loadCarsFromServer() {
     try {
-      const response = await fetch(API_BASE_URL + "/cars");
-      if (!response.ok) {
-        throw new Error("Could not load cars from server");
-      }
-      const cars = await response.json();
+      const cars = await apiFetch("/cars", { method: "GET" });
       if (Array.isArray(cars)) {
         loadedCars = cars.map(normalizeServerCar);
       }
@@ -359,6 +400,32 @@
       throw new Error("Missing admin token");
     }
     return apiFetch("/delete-car/" + id, {
+      method: "DELETE"
+    });
+  }
+
+  async function addBrandToServer(name) {
+    return apiFetch("/add-brand", {
+      method: "POST",
+      body: { name: name }
+    });
+  }
+
+  async function deleteBrandFromServer(id) {
+    return apiFetch("/delete-brand/" + id, {
+      method: "DELETE"
+    });
+  }
+
+  async function addTypeToServer(name) {
+    return apiFetch("/add-type", {
+      method: "POST",
+      body: { name: name }
+    });
+  }
+
+  async function deleteTypeFromServer(id) {
+    return apiFetch("/delete-type/" + id, {
       method: "DELETE"
     });
   }
@@ -679,17 +746,18 @@
 
     function refreshListingsData() {
       cars = getCars();
-      var rootValues = rootBrandTypesFromCars();
-      populateSelect(brandSelect, rootValues.brands, "Brands");
-      populateSelect(typeSelect, rootValues.types, "Types");
+      populateSelect(brandSelect, getBrands(), "Brands");
+      populateSelect(typeSelect, getTypes(), "Types");
     }
 
     refreshListingsData();
 
     // Expose refresh function so admin updates can refresh listings in real-time.
     window.refreshListings = async function () {
-      // Reload fresh data from backend
-      await loadCarsFromServer();
+      await Promise.all([
+        loadCarsFromServer(),
+        loadReferenceDataFromServer()
+      ]);
       refreshListingsData();
       applyFilters();
     };
@@ -1059,39 +1127,51 @@
     var addTypeButton = document.getElementById("addTypeButton");
 
     if (addBrandButton) {
-      addBrandButton.addEventListener("click", function () {
+      addBrandButton.addEventListener("click", async function () {
         var brandName = (addBrandInput && addBrandInput.value || "").trim();
         if (!brandName) {
           displayMessage("Please type a brand name.");
           return;
         }
-        addBrand(brandName);
-        displayMessage("Brand added successfully!");
-        populateAdminBrandTypeControls();
-        if (window.refreshListings) {
-          window.refreshListings();
-        }
-        if (addBrandInput) {
-          addBrandInput.value = "";
+
+        try {
+          await addBrandToServer(brandName);
+          await loadBrandsFromServer();
+          displayMessage("Brand added successfully!");
+          populateAdminBrandTypeControls();
+          if (window.refreshListings) {
+            await window.refreshListings();
+          }
+          if (addBrandInput) {
+            addBrandInput.value = "";
+          }
+        } catch (error) {
+          displayError("Failed to add brand: " + (error.message || "Unknown error"));
         }
       });
     }
 
     if (addTypeButton) {
-      addTypeButton.addEventListener("click", function () {
+      addTypeButton.addEventListener("click", async function () {
         var typeName = (addTypeInput && addTypeInput.value || "").trim();
         if (!typeName) {
           displayMessage("Please type a type name.");
           return;
         }
-        addType(typeName);
-        displayMessage("Type added successfully!");
-        populateAdminBrandTypeControls();
-        if (window.refreshListings) {
-          window.refreshListings();
-        }
-        if (addTypeInput) {
-          addTypeInput.value = "";
+
+        try {
+          await addTypeToServer(typeName);
+          await loadTypesFromServer();
+          displayMessage("Type added successfully!");
+          populateAdminBrandTypeControls();
+          if (window.refreshListings) {
+            await window.refreshListings();
+          }
+          if (addTypeInput) {
+            addTypeInput.value = "";
+          }
+        } catch (error) {
+          displayError("Failed to add type: " + (error.message || "Unknown error"));
         }
       });
     }
@@ -1146,7 +1226,7 @@
           renderFavoritesSection();
           populateAdminBrandTypeControls();
           if (window.refreshListings) {
-            window.refreshListings();
+            await window.refreshListings();
           }
           displayMessage("Car removed.");
         });
@@ -1182,49 +1262,75 @@
       }
       if (brandListContainer) {
         brandListContainer.innerHTML = "";
-        getBrands().forEach(function (brand) {
+        getBrandRecords().forEach(function (brandRecord) {
           var row = document.createElement("div");
           row.className = "admin-car";
-          row.innerHTML =
-            "<span>" +
-            brand +
-            "</span> <button type='button' class='btn btn-primary'>Delete</button>";
-          var button = row.querySelector("button");
-          button.addEventListener("click", function () {
-            if (getCars().some(function (car) { return car.brand === brand; })) {
-              displayMessage("Cannot delete brand with existing cars.");
-              return;
-            }
-            removeBrand(brand);
-            populateAdminBrandTypeControls();
-            if (window.refreshListings) {
-              window.refreshListings();
-            }
-          });
+          var label = document.createElement("span");
+          label.textContent = brandRecord.name;
+          row.appendChild(label);
+
+          if (brandRecord.id) {
+            var button = document.createElement("button");
+            button.type = "button";
+            button.className = "btn btn-primary";
+            button.textContent = "Delete";
+            button.addEventListener("click", async function () {
+              if (getCars().some(function (car) { return car.brand === brandRecord.name; })) {
+                displayError("Cannot delete brand with existing cars.");
+                return;
+              }
+
+              try {
+                await deleteBrandFromServer(brandRecord.id);
+                await loadBrandsFromServer();
+                populateAdminBrandTypeControls();
+                if (window.refreshListings) {
+                  await window.refreshListings();
+                }
+              } catch (error) {
+                displayError("Failed to delete brand: " + (error.message || "Unknown error"));
+              }
+            });
+            row.appendChild(button);
+          }
+
           brandListContainer.appendChild(row);
         });
       }
       if (typeListContainer) {
         typeListContainer.innerHTML = "";
-        getTypes().forEach(function (type) {
+        getTypeRecords().forEach(function (typeRecord) {
           var row = document.createElement("div");
           row.className = "admin-car";
-          row.innerHTML =
-            "<span>" +
-            type +
-            "</span> <button type='button' class='btn btn-primary'>Delete</button>";
-          var button = row.querySelector("button");
-          button.addEventListener("click", function () {
-            if (getCars().some(function (car) { return car.type === type; })) {
-              displayMessage("Cannot delete type with existing cars.");
-              return;
-            }
-            removeType(type);
-            populateAdminBrandTypeControls();
-            if (window.refreshListings) {
-              window.refreshListings();
-            }
-          });
+          var label = document.createElement("span");
+          label.textContent = typeRecord.name;
+          row.appendChild(label);
+
+          if (typeRecord.id) {
+            var button = document.createElement("button");
+            button.type = "button";
+            button.className = "btn btn-primary";
+            button.textContent = "Delete";
+            button.addEventListener("click", async function () {
+              if (getCars().some(function (car) { return car.type === typeRecord.name; })) {
+                displayError("Cannot delete type with existing cars.");
+                return;
+              }
+
+              try {
+                await deleteTypeFromServer(typeRecord.id);
+                await loadTypesFromServer();
+                populateAdminBrandTypeControls();
+                if (window.refreshListings) {
+                  await window.refreshListings();
+                }
+              } catch (error) {
+                displayError("Failed to delete type: " + (error.message || "Unknown error"));
+              }
+            });
+            row.appendChild(button);
+          }
+
           typeListContainer.appendChild(row);
         });
       }
@@ -1234,6 +1340,13 @@
       if (feedback) {
         feedback.textContent = text;
         feedback.style.color = "green";
+      }
+    }
+
+    function displayError(text) {
+      if (feedback) {
+        feedback.textContent = text;
+        feedback.style.color = "red";
       }
     }
 
@@ -1309,49 +1422,28 @@
             });
           formData.set("features", JSON.stringify(featureList));
 
-          var payload = {
-            id: editingId || String(Date.now()),
-            name: (formData.get("name") || "").trim(),
-            brand: (formData.get("brand") || "").trim(),
-            price: Number(formData.get("price")) || 0,
-            year: Number(formData.get("year")) || new Date().getFullYear(),
-            mileage: (formData.get("mileage") || "").trim(),
-            type: (formData.get("type") || "").trim(),
-            transmission: (formData.get("transmission") || "").trim(),
-            fuelType: (formData.get("fuelType") || "").trim(),
-            color: (formData.get("color") || "").trim(),
-            horsepower: (formData.get("horsepower") || "").trim(),
-            topSpeed: (formData.get("topSpeed") || "").trim(),
-            acceleration: (formData.get("acceleration") || "").trim(),
-            description: (formData.get("description") || "").trim(),
-            features: featureList,
-            images: existingImages,
-            videos: existingVideos,
-            video: existingVideo
-          };
-
           var savedCar = null;
           if (getAdminToken()) {
             try {
-              const endpoint = editingId ? "/edit-car/" + editingId : "/add-car";
-              const method = editingId ? "PUT" : "POST";
+              formData.set("name", (formData.get("name") || "").trim());
+              formData.set("brand", (formData.get("brand") || "").trim());
+              formData.set("price", String(Number(formData.get("price")) || 0));
+              formData.set("year", String(Number(formData.get("year")) || new Date().getFullYear()));
+              formData.set("mileage", (formData.get("mileage") || "").trim());
+              formData.set("type", (formData.get("type") || "").trim());
+              formData.set("transmission", (formData.get("transmission") || "").trim());
+              formData.set("fuelType", (formData.get("fuelType") || "").trim());
+              formData.set("color", (formData.get("color") || "").trim());
+              formData.set("horsepower", (formData.get("horsepower") || "").trim());
+              formData.set("topSpeed", (formData.get("topSpeed") || "").trim());
+              formData.set("acceleration", (formData.get("acceleration") || "").trim());
+              formData.set("description", (formData.get("description") || "").trim());
+              formData.set("features", JSON.stringify(featureList));
+              formData.set("images", JSON.stringify(existingImages));
+              formData.set("videos", JSON.stringify(existingVideos));
+              formData.set("video", existingVideo);
 
-              const response = await fetch(API_BASE_URL + endpoint, {
-                method: method,
-                headers: {
-                  Authorization: "Bearer " + getAdminToken()
-                },
-                body: formData
-              });
-
-              if (!response.ok) {
-                const errorData = await response.json().catch(function () {
-                  return {};
-                });
-                throw new Error(errorData.error || "HTTP " + response.status);
-              }
-
-              savedCar = await response.json();
+              savedCar = await saveCarToServer(formData, editingId);
             } catch (error) {
               console.warn("Backend save failed:", error);
               throw error;
@@ -1368,7 +1460,7 @@
           }
 
           if (window.refreshListings) {
-            window.refreshListings();
+            await window.refreshListings();
           }
 
           clearForm();
@@ -1401,7 +1493,7 @@
 
   document.addEventListener("DOMContentLoaded", async function () {
     await loadCarsFromServer();
-    ensureBrandTypeLists();
+    await loadReferenceDataFromServer();
     highlightNav();
     handleNavigationToggle();
     handleIndexPage();
