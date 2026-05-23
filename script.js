@@ -5,6 +5,8 @@
   const ADMIN_TOKEN_KEY = "Under2K Motors-admin-token";
   const REMOTE_API_BASE_URL = "https://under2kmotors.onrender.com";
   const API_BASE_URL_CANDIDATES = resolveApiBaseCandidates();
+  const API_REQUEST_TIMEOUT_MS = 8000;
+  const API_PROBE_TIMEOUT_MS = 3500;
   const WHATSAPP_PHONE = "13038831244"; // WhatsApp: +1 (303) 883-1244
 
   // Global variable to hold loaded cars from backend
@@ -194,6 +196,7 @@
   ];
 
   const bodyPage = document.body.dataset.page;
+  loadedCars = DEFAULT_CARS.map(normalizeServerCar);
 
   function uniqueValues(values) {
     return values.filter(function (value, index, arr) {
@@ -243,7 +246,7 @@
     var response;
 
     try {
-      response = await fetchWithTimeout(buildApiUrl(baseUrl, path), options, 12000);
+      response = await fetchWithTimeout(buildApiUrl(baseUrl, path), options, API_REQUEST_TIMEOUT_MS);
     } catch (error) {
       error.isNetworkError = true;
       throw error;
@@ -264,11 +267,45 @@
 
   async function probeApiBaseUrl(baseUrl) {
     try {
-      var response = await fetchWithTimeout(buildApiUrl(baseUrl, "/health"), { method: "GET" }, 12000);
+      var response = await fetchWithTimeout(buildApiUrl(baseUrl, "/health"), { method: "GET" }, API_PROBE_TIMEOUT_MS);
       return response.ok;
     } catch (error) {
       return false;
     }
+  }
+
+  async function findHealthyApiBaseUrl() {
+    if (!API_BASE_URL_CANDIDATES.length) {
+      return "";
+    }
+
+    return new Promise(function (resolve, reject) {
+      var pending = API_BASE_URL_CANDIDATES.length;
+      var settled = false;
+
+      API_BASE_URL_CANDIDATES.forEach(function (candidate) {
+        probeApiBaseUrl(candidate)
+          .then(function (isHealthy) {
+            pending -= 1;
+
+            if (isHealthy && !settled) {
+              settled = true;
+              resolve(candidate);
+              return;
+            }
+
+            if (pending === 0 && !settled) {
+              reject(new Error("Cannot connect to server. Please try again."));
+            }
+          })
+          .catch(function () {
+            pending -= 1;
+            if (pending === 0 && !settled) {
+              reject(new Error("Cannot connect to server. Please try again."));
+            }
+          });
+      });
+    });
   }
 
   async function ensureApiBaseUrl() {
@@ -276,17 +313,13 @@
       return activeApiBaseUrl;
     }
 
-    for (var i = 0; i < API_BASE_URL_CANDIDATES.length; i += 1) {
-      var candidate = API_BASE_URL_CANDIDATES[i];
-      if (await probeApiBaseUrl(candidate)) {
-        activeApiBaseUrl = candidate;
-        return activeApiBaseUrl;
-      }
+    try {
+      activeApiBaseUrl = await findHealthyApiBaseUrl();
+      return activeApiBaseUrl;
+    } catch (error) {
+      error.isNetworkError = true;
+      throw error;
     }
-
-    var unavailableError = new Error("Cannot connect to server. Please try again.");
-    unavailableError.isNetworkError = true;
-    throw unavailableError;
   }
 
   function buildReferenceRecords(names) {
@@ -421,6 +454,13 @@
     await Promise.all([
       loadBrandsFromServer(),
       loadTypesFromServer()
+    ]);
+  }
+
+  async function loadInitialData() {
+    await Promise.all([
+      loadCarsFromServer(),
+      loadReferenceDataFromServer()
     ]);
   }
 
@@ -895,6 +935,30 @@
     });
 
     applyFilters();
+  }
+
+  async function refreshVisiblePageData() {
+    if (bodyPage === "home") {
+      handleIndexPage();
+      return;
+    }
+
+    if (bodyPage === "listings") {
+      if (window.refreshListings) {
+        await window.refreshListings();
+      }
+      return;
+    }
+
+    if (bodyPage === "favorites") {
+      renderFavoritesSection();
+      return;
+    }
+
+    if (bodyPage === "details") {
+      handleDetailsPage();
+      return;
+    }
   }
 
   function renderFavoritesSection() {
@@ -1593,8 +1657,6 @@
   }
 
   document.addEventListener("DOMContentLoaded", async function () {
-    await loadCarsFromServer();
-    await loadReferenceDataFromServer();
     highlightNav();
     handleNavigationToggle();
     handleIndexPage();
@@ -1609,7 +1671,17 @@
         window.location.href = "login.html";
         return;
       }
+      await loadInitialData();
+      handleAdminPage();
+      return;
     }
-    handleAdminPage();
+
+    loadInitialData()
+      .then(function () {
+        return refreshVisiblePageData();
+      })
+      .catch(function (error) {
+        console.warn("Initial backend sync failed:", error);
+      });
   });
 })();

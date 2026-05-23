@@ -17,6 +17,8 @@ const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "DIBU";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "DIBU237";
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "under2k-admin-token";
 const frontendDir = path.resolve(__dirname, "..");
+const frontendIndexPath = path.join(frontendDir, "index.html");
+const shouldServeFrontend = fs.existsSync(frontendIndexPath);
 
 // Create uploads directory if it doesn't exist
 const uploadsDir = path.join(__dirname, "uploads");
@@ -160,7 +162,9 @@ app.use(express.urlencoded({ extended: true, limit: "100mb" }));
 
 // Serve uploaded files statically
 app.use("/uploads", express.static(uploadsDir));
-app.use(express.static(frontendDir));
+if (shouldServeFrontend) {
+  app.use(express.static(frontendDir));
+}
 
 // Migration function to convert base64 images/videos to files
 async function migrateBase64ToFiles() {
@@ -429,7 +433,15 @@ const transporter = nodemailer.createTransport({
 });
 
 app.get("/", (req, res) => {
-  res.sendFile(path.join(frontendDir, "index.html"));
+  if (shouldServeFrontend) {
+    res.sendFile(frontendIndexPath);
+    return;
+  }
+
+  res.json({
+    ok: true,
+    service: "Under2K Motors backend"
+  });
 });
 
 app.get("/health", (req, res) => {
