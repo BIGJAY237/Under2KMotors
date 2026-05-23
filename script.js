@@ -3,22 +3,27 @@
   const STORAGE_FAVORITES = "Under2K Motors-favorites";
   const STORAGE_SESSION = "Under2K Motors-admin";
   const ADMIN_TOKEN_KEY = "Under2K Motors-admin-token";
-  const API_BASE_URL = resolveApiBaseUrl();
+  const REMOTE_API_BASE_URL = "https://under2kmotors.onrender.com";
+  const API_BASE_URL_CANDIDATES = resolveApiBaseCandidates();
   const WHATSAPP_PHONE = "13038831244"; // WhatsApp: +1 (303) 883-1244
 
   // Global variable to hold loaded cars from backend
   var loadedCars = [];
   var loadedBrands = [];
   var loadedTypes = [];
+  var activeApiBaseUrl = "";
 
-  function resolveApiBaseUrl() {
+  function resolveApiBaseCandidates() {
+    var bases = [];
     var override = window.__UNDER2K_API_BASE_URL;
     if (typeof override === "string" && override.trim() !== "") {
-      return override.trim().replace(/\/+$/, "");
+      bases.push(override.trim().replace(/\/+$/, ""));
     }
 
     if (window.location.protocol === "file:") {
-      return "http://localhost:5000";
+      bases.push("http://localhost:5000");
+      bases.push(REMOTE_API_BASE_URL);
+      return uniqueValues(bases);
     }
 
     var isLocalHost =
@@ -26,10 +31,12 @@
       window.location.hostname === "127.0.0.1";
 
     if (isLocalHost && window.location.port !== "5000") {
-      return window.location.protocol + "//" + window.location.hostname + ":5000";
+      bases.push(window.location.protocol + "//" + window.location.hostname + ":5000");
     }
 
-    return window.location.origin.replace(/\/+$/, "");
+    bases.push(window.location.origin.replace(/\/+$/, ""));
+    bases.push(REMOTE_API_BASE_URL);
+    return uniqueValues(bases);
   }
 
   // Default cars data with images as URLs (for backward compatibility)
@@ -194,6 +201,94 @@
     });
   }
 
+  function isConnectionError(error) {
+    return Boolean(
+      error &&
+      (
+        error.name === "AbortError" ||
+        error.isNetworkError ||
+        (typeof error.message === "string" && error.message.toLowerCase().indexOf("failed to fetch") !== -1)
+      )
+    );
+  }
+
+  function isApiMismatchError(error) {
+    return Boolean(error && (error.status === 404 || error.status === 405));
+  }
+
+  function getCurrentApiBaseUrl() {
+    return activeApiBaseUrl || API_BASE_URL_CANDIDATES[0] || REMOTE_API_BASE_URL;
+  }
+
+  function buildApiUrl(baseUrl, path) {
+    return baseUrl.replace(/\/+$/, "") + path;
+  }
+
+  async function fetchWithTimeout(url, options, timeoutMs) {
+    var controller = new AbortController();
+    var timer = window.setTimeout(function () {
+      controller.abort();
+    }, timeoutMs);
+
+    try {
+      var requestOptions = options ? Object.assign({}, options) : {};
+      requestOptions.signal = controller.signal;
+      return await fetch(url, requestOptions);
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+
+  async function apiFetchFromBase(baseUrl, path, options) {
+    var response;
+
+    try {
+      response = await fetchWithTimeout(buildApiUrl(baseUrl, path), options, 12000);
+    } catch (error) {
+      error.isNetworkError = true;
+      throw error;
+    }
+
+    if (!response.ok) {
+      var json = await response.json().catch(function () {
+        return null;
+      });
+      var message = (json && json.error) || response.statusText;
+      var requestError = new Error(message || "Server error");
+      requestError.status = response.status;
+      throw requestError;
+    }
+
+    return response.json();
+  }
+
+  async function probeApiBaseUrl(baseUrl) {
+    try {
+      var response = await fetchWithTimeout(buildApiUrl(baseUrl, "/health"), { method: "GET" }, 12000);
+      return response.ok;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  async function ensureApiBaseUrl() {
+    if (activeApiBaseUrl) {
+      return activeApiBaseUrl;
+    }
+
+    for (var i = 0; i < API_BASE_URL_CANDIDATES.length; i += 1) {
+      var candidate = API_BASE_URL_CANDIDATES[i];
+      if (await probeApiBaseUrl(candidate)) {
+        activeApiBaseUrl = candidate;
+        return activeApiBaseUrl;
+      }
+    }
+
+    var unavailableError = new Error("Cannot connect to server. Please try again.");
+    unavailableError.isNetworkError = true;
+    throw unavailableError;
+  }
+
   function buildReferenceRecords(names) {
     return uniqueValues(names).map(function (name) {
       return {
@@ -279,15 +374,19 @@
       options.headers["Authorization"] = "Bearer " + token;
     }
 
-    const response = await fetch(API_BASE_URL + path, options);
-    if (!response.ok) {
-      const json = await response.json().catch(() => null);
-      const message = (json && json.error) || response.statusText;
-      const error = new Error(message || "Server error");
-      error.status = response.status;
-      throw error;
+    var baseUrl = await ensureApiBaseUrl();
+
+    try {
+      return await apiFetchFromBase(baseUrl, path, options);
+    } catch (error) {
+      if (!isConnectionError(error) && !isApiMismatchError(error)) {
+        throw error;
+      }
     }
-    return response.json();
+
+    activeApiBaseUrl = "";
+    baseUrl = await ensureApiBaseUrl();
+    return apiFetchFromBase(baseUrl, path, options);
   }
 
   async function loadBrandsFromServer() {
@@ -361,7 +460,8 @@
       return loadedCars;
     } catch (error) {
       console.warn("Backend unavailable:", error);
-      return [];
+      loadedCars = DEFAULT_CARS.map(normalizeServerCar);
+      return loadedCars;
     }
   }
 
@@ -559,18 +659,20 @@
       return trimmedValue;
     }
 
-    // If path starts with /uploads/, prefix with API_BASE_URL
+    var apiBaseUrl = getCurrentApiBaseUrl();
+
+    // If path starts with /uploads/, prefix with active API base URL
     if (trimmedValue.startsWith("/uploads/")) {
-      return API_BASE_URL + trimmedValue;
+      return apiBaseUrl + trimmedValue;
     }
 
-    // If path starts with /, prefix with API_BASE_URL
+    // If path starts with /, prefix with active API base URL
     if (trimmedValue.startsWith("/")) {
-      return API_BASE_URL + trimmedValue;
+      return apiBaseUrl + trimmedValue;
     }
 
-    // For relative paths, prefix with API_BASE_URL and /
-    return API_BASE_URL + "/" + trimmedValue;
+    // For relative paths, prefix with active API base URL and /
+    return apiBaseUrl + "/" + trimmedValue;
   }
 
   function getPrimaryVideoSource(car) {
@@ -1023,10 +1125,9 @@
       var email = formData.get("email");
       var message = formData.get("message");
       try {
-        await fetch(API_BASE_URL + "/contact", {
+        await apiFetch("/contact", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: name, email: email, message: message })
+          body: { name: name, email: email, message: message }
         });
         status.textContent = "Thank you! Your message has been sent. Our concierge will reply within one business day.";
         form.reset();
